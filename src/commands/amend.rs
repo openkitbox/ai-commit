@@ -3,7 +3,7 @@ use colored::*;
 use std::io::{self, Write};
 
 use crate::ai::AiClient;
-use crate::config::{ApiConfig, AppConfig};
+use crate::config::AppConfig;
 use crate::git::{
     execute_amend_with_cli, get_amend_diff, get_last_commit_message, get_staged_diff, get_truncated_diff,
 };
@@ -15,7 +15,7 @@ pub async fn handle_amend(
     context_limit: Option<usize>,
 ) -> Result<()> {
     let app_config = AppConfig::load_or_create()?;
-    let api_config = ApiConfig::from_env(&app_config.env)?;
+    let api_config = app_config.resolve_api_config()?;
 
     // Determine language: CLI arg > config file
     let language = language.unwrap_or(app_config.commit.language.as_str());

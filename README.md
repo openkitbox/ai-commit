@@ -17,8 +17,8 @@ AI Commit Tool integrates with your Git workflow to automatically generate high-
 - **Lock File Filtering**: Automatically ignores common lock files (Cargo.lock, package-lock.json, yarn.lock, etc.) from analysis
 - **Custom Ignore Patterns**: Glob-based patterns to filter out files from analysis (e.g. `**/generated/**`)
 - **GPG Signing Support**: Works seamlessly with GPG-signed commits
-- **Environment Variables**: API credentials read from environment variables, never stored in config files
-- **Configurable Env Var Names**: Customize which environment variable names are used via `[env]` section
+- **Model Profiles**: Define multiple API models in the TOML config and switch them by changing `active_profile`
+- **Direct API Keys**: Store each profile's API key in the TOML configuration and mask it in `config show`
 - **Fully Configurable**: Customizable commit behavior, ignore patterns, and AI prompts
 
 ## Installation
@@ -39,20 +39,15 @@ cargo build --release
 
 ### Setup
 
-1. **Set environment variables**:
-
-   ```bash
-   export AI_COMMIT_API_KEY="your-api-key-here"
-   export AI_COMMIT_MODEL="your-model-name"
-   # Optional: override the default endpoint
-   export AI_COMMIT_ENDPOINT="https://your-api-endpoint/chat/completions"
-   ```
-
-2. **Initialize configuration** (optional, creates default config with prompt templates):
+1. **Initialize configuration**:
 
    ```bash
    ai-commit config init
    ```
+
+2. **Edit `~/.config/ai-commit/config.toml`**:
+
+   Set `profiles.default.model` and `profiles.default.api_key`, or define multiple profiles and set `active_profile` to choose one.
 
 ## Usage
 
@@ -138,12 +133,22 @@ ai-commit config init
 ### Configuration Structure
 
 ```toml
-# Customize which environment variable names to read
-# Defaults shown below — only uncomment and change if needed
-[env]
-# endpoint_env = "AI_COMMIT_ENDPOINT"
-# api_key_env = "AI_COMMIT_API_KEY"
-# model_env = "AI_COMMIT_MODEL"
+# The selected profile is reloaded from this file on every command run.
+active_profile = "doubao"
+
+[profiles.doubao]
+endpoint = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+model = "doubao-1-5-pro-32k-250115"
+api_key = "your-doubao-api-key"
+max_tokens = 4096
+temperature = 0.7
+
+[profiles.deepseek]
+endpoint = "https://api.deepseek.com/chat/completions"
+model = "deepseek-chat"
+api_key = "your-deepseek-api-key"
+max_tokens = 4096
+temperature = 0.7
 
 [commit]
 auto_confirm = false
@@ -164,26 +169,24 @@ user_prompt_template = """Analyze the following git diff...
 ```"""
 ```
 
-### Configuration Options
+#### Model Profiles (`[profiles.<name>]`)
 
-#### Environment Variables (`[env]`)
+| Field | Description |
+|-------|-------------|
+| `active_profile` | Name of the profile used on the next run |
+| `endpoint` | OpenAI-compatible API endpoint |
+| `model` | Model name sent to the API |
+| `api_key` | API key used by this profile; `config show` masks its value |
+| `max_tokens` | Maximum response tokens (default: `4096`) |
+| `temperature` | Sampling temperature (default: `0.7`) |
 
-Customize the environment variable names used to read API credentials. This lets you integrate with existing CI/CD environments without setting extra variables.
-
-| Field | Default | Description |
-|-------|---------|-------------|
-| `endpoint_env` | `AI_COMMIT_ENDPOINT` | Env var for API endpoint URL |
-| `api_key_env` | `AI_COMMIT_API_KEY` | Env var for API key |
-| `model_env` | `AI_COMMIT_MODEL` | Env var for model name |
-
-Example — using OpenAI-compatible variables:
+To switch models, change only `active_profile`:
 
 ```toml
-[env]
-api_key_env = "OPENAI_API_KEY"
-model_env = "OPENAI_MODEL"
-endpoint_env = "OPENAI_BASE_URL"
+active_profile = "deepseek"
 ```
+
+The endpoint, model, API key, and token settings are read from the configuration file on every command run. API keys are stored in the selected profile; `config show` never prints their actual values.
 
 #### Commit Settings (`[commit]`)
 
@@ -271,12 +274,9 @@ feat: add user management and notification system
 
 ### Initial Setup
 
-```bash
-export AI_COMMIT_API_KEY="your-api-key"
-export AI_COMMIT_MODEL="your-model"
 ai-commit config init
+# Edit active_profile, profiles.default.model, and profiles.default.api_key in config.toml
 ai-commit config show
-```
 
 ### Standard Workflow
 
@@ -303,21 +303,24 @@ ai-commit --dry-run
 
 ### Using a Different AI Provider
 
-```bash
-export AI_COMMIT_API_KEY="sk-..."
-export AI_COMMIT_MODEL="gpt-4o"
-export AI_COMMIT_ENDPOINT="https://api.openai.com/v1/chat/completions"
-ai-commit commit
-```
-
-Or configure custom env var names in `config.toml`:
+Define another profile in `~/.config/ai-commit/config.toml`:
 
 ```toml
-[env]
-api_key_env = "OPENAI_API_KEY"
-model_env = "OPENAI_MODEL"
-endpoint_env = "OPENAI_BASE_URL"
+[profiles.openai]
+endpoint = "https://api.openai.com/v1/chat/completions"
+model = "gpt-4o"
+api_key = "sk-..."
+max_tokens = 4096
+temperature = 0.7
 ```
+
+Switch profiles by editing `active_profile`:
+
+```toml
+active_profile = "openai"
+```
+
+The new profile is used on the next `ai-commit` invocation; no shell refresh is needed.
 
 ## Technical Details
 
@@ -332,15 +335,14 @@ endpoint_env = "OPENAI_BASE_URL"
 ### AI Integration
 
 - Compatible with any OpenAI-compatible chat completions API
-- API credentials managed through environment variables only (never stored in files)
+- API credentials are loaded from the selected TOML profile
 - HTTP connection timeout (10s connect, 60s total)
 - Handles API errors gracefully with proper exit codes
 - Supports fully customizable prompts for different commit styles
 
 ### Security
 
-- API keys read from environment variables, never written to config files
-- `config show` displays env var names only, never actual values
+- API keys are stored in the selected profile and masked by `config show`
 - Works with GPG-signed commits
 - Respects git configuration settings
 

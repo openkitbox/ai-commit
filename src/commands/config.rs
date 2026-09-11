@@ -31,10 +31,10 @@ pub fn init_config() -> Result<()> {
     println!("Location: {}", config_path.display().to_string().bright_blue());
     println!();
     println!("{}", "📝 Next steps:".bright_cyan().bold());
-    println!("1. Set your API key: {}", "export AI_COMMIT_API_KEY=\"your-api-key\"".yellow());
-    println!("2. Set your model: {}", "export AI_COMMIT_MODEL=\"your-model\"".yellow());
-    println!("3. View configuration: {}", "ai-commit config show".yellow());
-    println!("4. Edit prompts: Edit the [prompts] section in the config file");
+    println!("1. Edit {} and set {}", config_path.display(), "profiles.default.model".yellow());
+    println!("2. Set the API key in {}", "profiles.default.api_key".yellow());
+    println!("3. Add more [profiles.<name>] sections and change active_profile to switch models");
+    println!("4. View configuration: {}", "ai-commit config show".yellow());
     println!("5. Start using: {}", "ai-commit".yellow());
 
     Ok(())
@@ -51,16 +51,31 @@ pub fn show_config() -> Result<()> {
         println!("Run {} to create it.", "ai-commit config init".yellow());
         return Ok(());
     }
-
     let config = AppConfig::load()?;
 
     println!("File location: {}", config_path.display().to_string().bright_blue());
     println!();
-    println!("[env]");
-    println!("  endpoint_env = \"{}\"", config.env.endpoint_env.bright_green());
-    println!("  api_key_env = \"{}\"", config.env.api_key_env.bright_green());
-    println!("  model_env = \"{}\"", config.env.model_env.bright_green());
-    println!();
+
+    if !config.profiles.is_empty() {
+        println!("[profiles]");
+        println!("  active_profile = \"{}\"", config.active_profile.bright_green());
+        println!();
+
+        for (name, profile) in &config.profiles {
+            println!("[profiles.{name}]");
+            println!("  endpoint = \"{}\"", profile.endpoint.bright_green());
+            println!("  model = \"{}\"", profile.model.bright_green());
+            let api_key_status = if profile.api_key.is_empty() { "<not set>" } else { "<set>" };
+            println!("  api_key = \"{}\"", api_key_status.bright_green());
+            println!("  max_tokens = {}", profile.max_tokens);
+            println!("  temperature = {}", profile.temperature);
+            println!();
+        }
+    } else {
+        println!("{}", "No model profiles configured.".yellow());
+        println!();
+    }
+
     println!("[commit]");
     println!("  auto_confirm = {}", config.commit.auto_confirm);
     println!("  dry_run_by_default = {}", config.commit.dry_run_by_default);
@@ -97,15 +112,17 @@ pub fn edit_prompts_help() -> Result<()> {
     println!("  • Use {{diff}} as placeholder for the git diff content");
     println!("  • Controls how AI analyzes changes");
     println!();
-    println!("{}", "[env]".yellow());
-    println!("  • Customize environment variable names for API configuration");
-    println!("  • endpoint_env, api_key_env, model_env");
+    println!("{}", "[profiles]".yellow());
+    println!("  • Set active_profile to choose the model used on the next run");
+    println!("  • Add model settings under [profiles.<name>]");
+    println!("  • Store the API key in the profile's api_key field");
     println!();
+
     println!("{}", "💡 Tips:".bright_green().bold());
     println!("  • Test changes with: ai-commit --dry-run");
     println!("  • Keep {{diff}} placeholder in templates");
-    println!("  • Reload happens automatically on next run");
-    println!("  • Back up your custom prompts before updates");
+    println!("  • Configuration reloads automatically on the next run");
+    println!("  • API keys are masked by config show");
 
     if !config_path.exists() {
         println!();

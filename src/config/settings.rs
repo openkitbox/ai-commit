@@ -1,10 +1,11 @@
 use anyhow::Result;
 use log::debug;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
     pub commit: CommitConfig,
@@ -12,38 +13,40 @@ pub struct AppConfig {
     pub hooks: HookConfig,
     #[serde(default)]
     pub prompts: PromptConfig,
+    #[serde(default = "default_active_profile")]
+    pub(crate) active_profile: String,
     #[serde(default)]
-    pub env: EnvConfig,
+    pub(crate) profiles: BTreeMap<String, ModelProfile>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct EnvConfig {
-    #[serde(default = "default_endpoint_env")]
-    pub endpoint_env: String,
-    #[serde(default = "default_api_key_env")]
-    pub api_key_env: String,
-    #[serde(default = "default_model_env")]
-    pub model_env: String,
-    #[serde(default = "default_max_tokens_env")]
-    pub max_tokens_env: String,
-    #[serde(default = "default_temperature_env")]
-    pub temperature_env: String,
+pub(crate) struct ModelProfile {
+    #[serde(default = "default_endpoint")]
+    pub(crate) endpoint: String,
+    #[serde(default)]
+    pub(crate) model: String,
+    #[serde(default)]
+    pub(crate) api_key: String,
+    #[serde(default = "default_max_tokens")]
+    pub(crate) max_tokens: usize,
+    #[serde(default = "default_temperature")]
+    pub(crate) temperature: f32,
 }
 
-fn default_endpoint_env() -> String {
-    "AI_COMMIT_ENDPOINT".into()
+fn default_active_profile() -> String {
+    "default".into()
 }
-fn default_api_key_env() -> String {
-    "AI_COMMIT_API_KEY".into()
+
+fn default_endpoint() -> String {
+    "https://ark.cn-beijing.volces.com/api/v3/chat/completions".into()
 }
-fn default_model_env() -> String {
-    "AI_COMMIT_MODEL".into()
+
+fn default_max_tokens() -> usize {
+    4096
 }
-fn default_max_tokens_env() -> String {
-    "AI_COMMIT_MAX_TOKENS".into()
-}
-fn default_temperature_env() -> String {
-    "AI_COMMIT_TEMPERATURE".into()
+
+fn default_temperature() -> f32 {
+    0.7
 }
 
 pub struct ApiConfig {
@@ -54,20 +57,15 @@ pub struct ApiConfig {
     pub temperature: Option<f32>,
 }
 
-impl ApiConfig {
-    pub fn from_env(env_config: &EnvConfig) -> Result<Self> {
-        let endpoint = std::env::var(&env_config.endpoint_env)
-            .unwrap_or_else(|_| "https://ark.cn-beijing.volces.com/api/v3/chat/completions".to_string());
-        let api_key = std::env::var(&env_config.api_key_env)
-            .map_err(|_| anyhow::anyhow!("API key not found. Set {} environment variable", env_config.api_key_env))?;
-        let model = std::env::var(&env_config.model_env)
-            .map_err(|_| anyhow::anyhow!("Model not found. Set {} environment variable", env_config.model_env))?;
-        let max_tokens =
-            std::env::var(&env_config.max_tokens_env).ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(4096);
-        let temperature =
-            std::env::var(&env_config.temperature_env).ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.7);
-
-        Ok(Self { endpoint, api_key, model, max_tokens: Some(max_tokens), temperature: Some(temperature) })
+impl ModelProfile {
+    fn default_profile() -> Self {
+        Self {
+            endpoint: default_endpoint(),
+            model: String::new(),
+            api_key: String::new(),
+            max_tokens: default_max_tokens(),
+            temperature: default_temperature(),
+        }
     }
 }
 
@@ -242,14 +240,17 @@ impl Default for PromptConfig {
     }
 }
 
-impl Default for EnvConfig {
+impl Default for AppConfig {
     fn default() -> Self {
+        let mut profiles = BTreeMap::new();
+        profiles.insert("default".into(), ModelProfile::default_profile());
+
         Self {
-            endpoint_env: default_endpoint_env(),
-            api_key_env: default_api_key_env(),
-            model_env: default_model_env(),
-            max_tokens_env: default_max_tokens_env(),
-            temperature_env: default_temperature_env(),
+            commit: CommitConfig::default(),
+            hooks: HookConfig::default(),
+            prompts: PromptConfig::default(),
+            active_profile: default_active_profile(),
+            profiles,
         }
     }
 }
@@ -280,6 +281,18 @@ impl AppConfig {
         }
     }
 
+    pub fn resolve_api_config(&self) -> Result<ApiConfig> {
+        let profile = self.profiles.get(&self.active_profile).ok_or_else(|| {
+            let available = self.profiles.keys().map(String::as_str).collect::<Vec<_>>().join(", ");
+            anyhow::anyhow!(
+                "Active profile '{}' not found in configuration. Available profiles: {}",
+                self.active_profile,
+                if available.is_empty() { "(none)" } else { &available }
+            )
+        })?;
+        resolve_profile(&self.active_profile, profile)
+    }
+
     pub fn save(&self) -> Result<()> {
         let config_path = Self::config_path()?;
 
@@ -298,26 +311,46 @@ impl AppConfig {
     }
 }
 
+fn resolve_profile(profile_name: &str, profile: &ModelProfile) -> Result<ApiConfig> {
+    if profile.model.trim().is_empty() {
+        return Err(anyhow::anyhow!(
+            "Model is not configured for profile '{}'. Set profiles.{}.model in the config file.",
+            profile_name,
+            profile_name
+        ));
+    }
+
+    if profile.api_key.trim().is_empty() {
+        return Err(anyhow::anyhow!(
+            "API key is not configured for profile '{}'. Set profiles.{}.api_key in the config file.",
+            profile_name,
+            profile_name
+        ));
+    }
+
+    Ok(ApiConfig {
+        endpoint: profile.endpoint.clone(),
+        api_key: profile.api_key.clone(),
+        model: profile.model.clone(),
+        max_tokens: Some(profile.max_tokens),
+        temperature: Some(profile.temperature),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_app_config_default_no_panic() {
+    fn test_app_config_default_contains_unconfigured_profile() {
         let config = AppConfig::default();
         assert!(config.commit.ignore_lock_files);
         assert!(!config.commit.auto_confirm);
         assert_eq!(config.commit.context_limit, 800000);
-    }
-
-    #[test]
-    fn test_env_config_default() {
-        let env = EnvConfig::default();
-        assert_eq!(env.endpoint_env, "AI_COMMIT_ENDPOINT");
-        assert_eq!(env.api_key_env, "AI_COMMIT_API_KEY");
-        assert_eq!(env.model_env, "AI_COMMIT_MODEL");
-        assert_eq!(env.max_tokens_env, "AI_COMMIT_MAX_TOKENS");
-        assert_eq!(env.temperature_env, "AI_COMMIT_TEMPERATURE");
+        assert_eq!(config.active_profile, "default");
+        assert!(config.profiles.contains_key("default"));
+        assert!(config.profiles["default"].model.is_empty());
+        assert!(config.profiles["default"].api_key.is_empty());
     }
 
     #[test]
@@ -337,27 +370,105 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_minimal_config() {
+    fn test_parse_profiles() {
         let toml_str = r#"
-[prompts]
-system_prompt = "test system"
-user_prompt_template = "test {diff}"
+active_profile = "deepseek"
 
-[env]
-endpoint_env = "MY_ENDPOINT"
+[profiles.doubao]
+endpoint = "https://ark.example/v1"
+model = "doubao"
+api_key = "doubao-secret"
+max_tokens = 2048
+temperature = 0.4
+
+[profiles.deepseek]
+endpoint = "https://deepseek.example/v1"
+model = "deepseek-chat"
+api_key = "deepseek-secret"
+max_tokens = 4096
+temperature = 0.7
 "#;
         let config: AppConfig = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.prompts.system_prompt, "test system");
-        assert_eq!(config.env.endpoint_env, "MY_ENDPOINT");
-        assert_eq!(config.env.api_key_env, "AI_COMMIT_API_KEY");
+        let profile = config.profiles.get("deepseek").unwrap();
+        assert_eq!(config.active_profile, "deepseek");
+        assert_eq!(profile.endpoint, "https://deepseek.example/v1");
+        assert_eq!(profile.model, "deepseek-chat");
+        assert_eq!(profile.api_key, "deepseek-secret");
+        assert_eq!(profile.max_tokens, 4096);
+        assert_eq!(profile.temperature, 0.7);
+    }
+
+    #[test]
+    fn test_resolve_active_profile_uses_direct_api_key() {
+        let config: AppConfig = toml::from_str(
+            r#"
+active_profile = "deepseek"
+
+[profiles.deepseek]
+endpoint = "https://deepseek.example/v1"
+model = "deepseek-chat"
+api_key = "deepseek-secret"
+max_tokens = 2048
+temperature = 0.4
+"#,
+        )
+        .unwrap();
+
+        let api_config = config.resolve_api_config().unwrap();
+        assert_eq!(api_config.endpoint, "https://deepseek.example/v1");
+        assert_eq!(api_config.model, "deepseek-chat");
+        assert_eq!(api_config.api_key, "deepseek-secret");
+        assert_eq!(api_config.max_tokens, Some(2048));
+        assert_eq!(api_config.temperature, Some(0.4));
+    }
+
+    #[test]
+    fn test_missing_active_profile_is_an_error() {
+        let config: AppConfig = toml::from_str(
+            r#"
+active_profile = "missing"
+
+[profiles.default]
+model = "test-model"
+api_key = "test-key"
+"#,
+        )
+        .unwrap();
+
+        let error = config.resolve_api_config().err().unwrap().to_string();
+        assert!(error.contains("missing"));
+        assert!(error.contains("default"));
+    }
+
+    #[test]
+    fn test_empty_model_is_an_error() {
+        let config = AppConfig::default();
+        let error = config.resolve_api_config().err().unwrap().to_string();
+        assert!(error.contains("Model is not configured"));
+        assert!(error.contains("profiles.default.model"));
+    }
+
+    #[test]
+    fn test_empty_api_key_is_an_error() {
+        let config: AppConfig = toml::from_str(
+            r#"
+[profiles.default]
+model = "test-model"
+"#,
+        )
+        .unwrap();
+
+        let error = config.resolve_api_config().err().unwrap().to_string();
+        assert!(error.contains("API key is not configured"));
+        assert!(error.contains("profiles.default.api_key"));
     }
 
     #[test]
     fn test_parse_empty_config_uses_defaults() {
-        let toml_str = "";
-        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        let config: AppConfig = toml::from_str("").unwrap();
         assert!(config.commit.ignore_lock_files);
-        assert_eq!(config.env.model_env, "AI_COMMIT_MODEL");
+        assert_eq!(config.active_profile, "default");
+        assert!(config.profiles.is_empty());
     }
 
     #[test]
@@ -366,6 +477,8 @@ endpoint_env = "MY_ENDPOINT"
         let toml_str = toml::to_string(&config).unwrap();
         let parsed: AppConfig = toml::from_str(&toml_str).unwrap();
         assert_eq!(parsed.commit.ignore_lock_files, config.commit.ignore_lock_files);
-        assert_eq!(parsed.env.endpoint_env, config.env.endpoint_env);
+        assert_eq!(parsed.active_profile, config.active_profile);
+        assert_eq!(parsed.profiles["default"].model, config.profiles["default"].model);
+        assert_eq!(parsed.profiles["default"].api_key, config.profiles["default"].api_key);
     }
 }

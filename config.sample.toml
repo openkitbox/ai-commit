@@ -1,10 +1,21 @@
-# Environment variable names for API configuration (customize as needed)
-# Defaults: AI_COMMIT_ENDPOINT, AI_COMMIT_API_KEY, AI_COMMIT_MODEL
-[env]
-# endpoint_env = "AI_COMMIT_ENDPOINT"
-# api_key_env = "AI_COMMIT_API_KEY"
-# model_env = "AI_COMMIT_MODEL"
+# The selected profile is reloaded from this file on every command run.
+active_profile = "doubao"
 
+[profiles.doubao]
+endpoint = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+model = "doubao-1-5-pro-32k-250115"
+api_key = "your-doubao-api-key"
+max_tokens = 4096
+temperature = 0.7
+
+[profiles.deepseek]
+endpoint = "https://api.deepseek.com/chat/completions"
+model = "deepseek-chat"
+api_key = "your-deepseek-api-key"
+max_tokens = 4096
+temperature = 0.7
+
+# API keys are stored directly in each profile and masked by `config show`.
 [commit]
 auto_confirm = false
 dry_run_by_default = false

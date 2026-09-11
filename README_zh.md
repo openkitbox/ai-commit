@@ -17,7 +17,7 @@ AI Commit Tool 集成到你的 Git 工作流程中，自动生成遵循 Conventi
 - **修订支持**：为修订之前的提交生成新信息
 - **锁文件过滤**：自动忽略常见的锁文件（Cargo.lock、package-lock.json、yarn.lock 等）的分析
 - **GPG 签名支持**：与 GPG 签名的提交无缝协作
-- **完全可配置**：可自定义 API 设置、忽略模式、行为选项和 AI 提示
+- **多模型配置档**：在 TOML 配置文件中定义多个模型，通过修改 `active_profile` 切换模型
 
 ## 安装
 
@@ -25,7 +25,7 @@ AI Commit Tool 集成到你的 Git 工作流程中，自动生成遵循 Conventi
 
 - Rust（最新稳定版本）
 - Git 仓库
-- AI API 密钥（设置为环境变量 `AI_COMMIT_ARK_API_KEY` 或 `ARK_API_KEY`）
+- AI API 密钥（直接填写在配置档的 `api_key` 字段中）
 
 ### 从源码构建
 
@@ -37,16 +37,15 @@ cargo build --release
 
 ### 设置
 
-1. **设置 API 密钥**：
+1. **初始化配置**：
 
-   ```bash
-   export AI_COMMIT_ARK_API_KEY="your-api-key-here"
-   ```
-
-2. **初始化配置**：
    ```bash
    ai-commit config init
    ```
+
+2. **编辑配置文件**：
+
+   编辑 `~/.config/ai-commit/config.toml`，设置 `profiles.default.model` 和 `profiles.default.api_key`，或增加多个配置档并设置 `active_profile`。
 
 ## 使用方法
 
@@ -154,38 +153,60 @@ ai-commit config init
 ### 默认配置结构
 
 ```toml
-[api]
+# 每次执行命令都会重新读取当前配置档
+active_profile = "doubao"
+
+[profiles.doubao]
 endpoint = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
 model = "doubao-1-5-pro-32k-250115"
-max_tokens = 1000
+api_key = "your-doubao-api-key"
+max_tokens = 4096
 temperature = 0.7
-context_limit = 200000
+
+[profiles.deepseek]
+endpoint = "https://api.deepseek.com/chat/completions"
+model = "deepseek-chat"
+api_key = "your-deepseek-api-key"
+max_tokens = 4096
+temperature = 0.7
 
 [commit]
 auto_confirm = false
 dry_run_by_default = false
 ignore_lock_files = true
 custom_ignore_patterns = []
+context_limit = 200000
 
 [hooks]
 enabled = false
-hook_types = ["prepare-commit-msg"]
+hook_types = []
 
 [prompts]
 system_prompt = """你是一个专业的软件开发者..."""
 user_prompt_template = """分析以下 git diff..."""
-simple_prompt_template = """生成简洁的单行提交信息..."""
 ```
 
 ### 配置选项
 
-#### API 设置 (`[api]`)
+#### 模型配置档（`[profiles.<name>]`）
 
-- `endpoint`：AI 服务端点 URL
-- `model`：用于生成的 AI 模型
-- `max_tokens`：AI 响应的最大令牌数（默认：1000）
-- `temperature`：创造性水平 0.0-1.0（默认：0.7）
-- `context_limit`：发送给 AI 的最大字符数（默认：200000）
+| 字段 | 说明 |
+|-------|-------------|
+| `active_profile` | 下一次执行使用的配置档名称 |
+| `endpoint` | OpenAI 兼容 API 服务端点 |
+| `model` | 发送给 API 的模型名称 |
+| `api_key` | 该配置档使用的 API Key，`config show` 会隐藏实际值 |
+| `max_tokens` | 响应最大 token 数，默认 `4096` |
+| `temperature` | 采样温度，默认 `0.7` |
+
+切换模型时只需修改：
+
+```toml
+active_profile = "deepseek"
+```
+
+endpoint、model、API Key 和 token 参数会在每次命令执行时从配置文件重新读取。API Key 直接保存在选中的配置档中，`config show` 不会输出实际值。
+
 
 #### 提交设置 (`[commit]`)
 
@@ -286,9 +307,9 @@ feat: 添加用户管理和通知系统
 
 ### 初始设置
 ```bash
-# 一次性设置
-export AI_COMMIT_ARK_API_KEY="your-api-key"
 ai-commit config init
+
+# 编辑 active_profile、profiles.default.model 和 profiles.default.api_key
 
 # 验证配置
 ai-commit config show
