@@ -1,5 +1,5 @@
 use anyhow::Result;
-use git2::{DiffOptions, Repository};
+use git2::{DiffOptions, ErrorCode, Repository, Tree};
 use std::path::Path;
 use std::str;
 
@@ -11,8 +11,11 @@ fn open_repo() -> Result<Repository> {
 
 pub fn get_staged_diff(commit_config: Option<&CommitConfig>) -> Result<String> {
     let repo = open_repo()?;
+    get_staged_diff_from_repo(&repo, commit_config)
+}
 
-    let head = repo.head()?.peel_to_tree()?;
+fn get_staged_diff_from_repo(repo: &Repository, commit_config: Option<&CommitConfig>) -> Result<String> {
+    let head = head_tree_or_empty(repo)?;
     let mut index = repo.index()?;
     let oid = index.write_tree()?;
     let index_tree = repo.find_tree(oid)?;
@@ -23,6 +26,17 @@ pub fn get_staged_diff(commit_config: Option<&CommitConfig>) -> Result<String> {
     let diff = repo.diff_tree_to_tree(Some(&head), Some(&index_tree), Some(&mut diff_opts))?;
 
     format_diff(diff, commit_config)
+}
+
+fn head_tree_or_empty(repo: &Repository) -> Result<Tree<'_>> {
+    match repo.head() {
+        Ok(head) => Ok(head.peel_to_tree()?),
+        Err(error) if error.code() == ErrorCode::UnbornBranch => {
+            let empty_tree_id = repo.treebuilder(None)?.write()?;
+            Ok(repo.find_tree(empty_tree_id)?)
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 
 pub fn get_unstaged_diff(commit_config: Option<&CommitConfig>) -> Result<String> {
@@ -142,7 +156,7 @@ pub fn get_truncated_diff(diff: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
+    use std::{fs, path::Path};
 
     #[test]
     fn test_should_ignore_file_lock_files() {
@@ -174,6 +188,27 @@ mod tests {
     fn test_should_ignore_by_custom_patterns_invalid_glob() {
         let patterns = vec!["[invalid".to_string()];
         assert!(!should_ignore_by_custom_patterns(Path::new("anything"), &patterns));
+    }
+
+    #[test]
+    fn test_staged_diff_for_unborn_branch() {
+        let path = std::env::temp_dir().join(format!(
+            "ai-commit-unborn-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let repo = Repository::init(&path).unwrap();
+        fs::write(path.join("README.md"), "initial content\n").unwrap();
+
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("README.md")).unwrap();
+        index.write().unwrap();
+        drop(index);
+
+        let diff = get_staged_diff_from_repo(&repo, None).unwrap();
+        assert!(diff.contains("initial content"));
+        drop(repo);
+        fs::remove_dir_all(path).unwrap();
     }
 
     #[test]

@@ -8,8 +8,13 @@ dotenv:
 
 tasks:
   default:
+    desc: print all alailable tasks
     cmd: task --list-all
-  build:
+  
+  prod:
+    desc: build with repease and move to /opt/bin
+    env:
+       RUSTFLAGS: "-C target-cpu=native"
     cmds:
       - cargo build -r
       - cp /tmp/.cargo/target/release/ai-commit /opt/bin/ai-commit
@@ -18,11 +23,3 @@ tasks:
     cmds:
       - cargo fmt
       - cargo clippy --all-targets
-  commit:
-    cmds:
-      - git add .
-      - ai-commit
-  hicode:
-    desc: run the application (uses env vars for model config)
-    cmds:
-      - hicode

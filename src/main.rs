@@ -4,10 +4,8 @@ use ai_commit::commands::{amend, commit, config, install, uninstall};
 use anyhow::Result;
 use clap::{Arg, Command};
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    env_logger::init();
-    let matches = Command::new("ai-commit")
+fn cli() -> Command {
+    Command::new("ai-commit")
         .version(env!("CARGO_PKG_VERSION"))
         .about("AI-assisted Git commit message generator (defaults to 'commit' if no subcommand)")
         .author("John")
@@ -28,6 +26,19 @@ async fn main() -> Result<()> {
                 .value_name("KEYWORDS")
                 .help("Keywords or context to guide AI commit message generation (implies 'commit' command)")
                 .global(false),
+        )
+        .arg(
+            Arg::new("context-limit")
+                .long("context-limit")
+                .value_name("CHARS")
+                .help("Maximum characters to send to AI (default: from config)")
+                .value_parser(clap::value_parser!(usize)),
+        )
+        .arg(
+            Arg::new("dry-run")
+                .long("dry-run")
+                .help("Show generated message without committing")
+                .action(clap::ArgAction::SetTrue),
         )
         .subcommand(Command::new("install").about("Install git hooks for AI commit assistance"))
         .subcommand(Command::new("uninstall").about("Remove AI commit hooks"))
@@ -102,7 +113,12 @@ async fn main() -> Result<()> {
                 .subcommand(Command::new("init").about("Initialize default configuration"))
                 .subcommand(Command::new("edit-prompts").about("Show how to edit prompt templates")),
         )
-        .get_matches();
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    env_logger::init();
+    let matches = cli().get_matches();
 
     match matches.subcommand() {
         Some(("install", _)) => install::install_hook(),
@@ -137,7 +153,22 @@ async fn main() -> Result<()> {
         _ => {
             let language = matches.get_one::<String>("language").map(|s| s.as_str());
             let keywords = matches.get_one::<String>("keywords").map(|s| s.as_str());
-            commit::handle_commit(language, keywords, false, None).await
+            let dry_run = matches.get_flag("dry-run");
+            let context_limit = matches.get_one::<usize>("context-limit").copied();
+            commit::handle_commit(language, keywords, dry_run, context_limit).await
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn root_commit_options_are_parsed() {
+        let matches = cli().try_get_matches_from(["ai-commit", "--dry-run", "--context-limit", "123"]).unwrap();
+
+        assert!(matches.get_flag("dry-run"));
+        assert_eq!(matches.get_one::<usize>("context-limit"), Some(&123));
     }
 }
