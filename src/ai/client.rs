@@ -90,6 +90,7 @@ pub struct AiClient {
 impl AiClient {
     pub fn new(config: ApiConfig, system_prompt: String, user_prompt_template: String) -> anyhow::Result<Self> {
         let client = Client::builder()
+            .user_agent(concat!("ai-commit/", env!("CARGO_PKG_VERSION")))
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(120))
             .build()
