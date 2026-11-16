@@ -1,5 +1,5 @@
 use anyhow::Result;
-use git2::{DiffOptions, ErrorCode, Repository, Tree};
+use git2::{DiffLineType, DiffOptions, ErrorCode, Repository, Tree};
 use std::path::Path;
 use std::str;
 
@@ -68,6 +68,9 @@ fn format_diff(diff: git2::Diff, commit_config: Option<&CommitConfig>) -> Result
         }
 
         if let Ok(content) = str::from_utf8(line.content()) {
+            if matches!(line.origin_value(), DiffLineType::Context | DiffLineType::Addition | DiffLineType::Deletion) {
+                diff_content.push(line.origin());
+            }
             diff_content.push_str(content);
         }
         true
@@ -157,6 +160,43 @@ pub fn get_truncated_diff(diff: &str, limit: usize) -> String {
 mod tests {
     use super::*;
     use std::{fs, path::Path};
+
+    #[test]
+    fn test_format_diff_preserves_unified_diff_line_prefixes() {
+        let path = std::env::temp_dir().join(format!(
+            "ai-commit-diff-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time is after Unix epoch")
+                .as_nanos()
+        ));
+        let repo = Repository::init(&path).expect("temporary repository should initialize");
+        let file_path = path.join("file.txt");
+
+        fs::write(&file_path, "unchanged\nremoved\n").expect("old file should be written");
+        let mut index = repo.index().expect("repository index should open");
+        index.add_path(Path::new("file.txt")).expect("old file should be indexed");
+        let old_tree_id = index.write_tree().expect("old tree should be written");
+        let old_tree = repo.find_tree(old_tree_id).expect("old tree should be found");
+
+        fs::write(&file_path, "unchanged\nadded\n").expect("new file should be written");
+        index.add_path(Path::new("file.txt")).expect("new file should be indexed");
+        let new_tree_id = index.write_tree().expect("new tree should be written");
+        let new_tree = repo.find_tree(new_tree_id).expect("new tree should be found");
+        let diff = repo.diff_tree_to_tree(Some(&old_tree), Some(&new_tree), None).expect("tree diff should be created");
+
+        let formatted = format_diff(diff, None).expect("diff should be formatted");
+
+        assert!(formatted.contains(" unchanged\n"), "context line prefix is missing: {formatted:?}");
+        assert!(formatted.contains("-removed\n"), "deletion line prefix is missing: {formatted:?}");
+        assert!(formatted.contains("+added\n"), "addition line prefix is missing: {formatted:?}");
+
+        drop(new_tree);
+        drop(old_tree);
+        drop(repo);
+        fs::remove_dir_all(path).expect("temporary repository should be removed");
+    }
 
     #[test]
     fn test_should_ignore_file_lock_files() {
